@@ -2,6 +2,7 @@ package link
 
 import (
 	"net"
+	"unsafe"
 
 	curve "github.com/fumiama/go-x25519"
 
@@ -9,10 +10,10 @@ import (
 )
 
 // AddPeer 添加一个 peer
-func AddPeer(peerip string, pubicKey *[32]byte, endPoint string, allowedIPs []string, keepAlive int64, allowTrans bool) (l *Link) {
+func (m *Me) AddPeer(peerip string, pubicKey *[32]byte, endPoint string, allowedIPs []string, keepAlive int64, allowTrans bool) (l *Link) {
 	peerip = net.ParseIP(peerip).String()
 	var ok bool
-	l, ok = IsInPeer(peerip)
+	l, ok = m.IsInPeer(peerip)
 	if ok {
 		return
 	}
@@ -22,12 +23,13 @@ func AddPeer(peerip string, pubicKey *[32]byte, endPoint string, allowedIPs []st
 		pipe:       make(chan *head.Packet, 32),
 		peerip:     net.ParseIP(peerip),
 		allowtrans: allowTrans,
+		me:         m,
 	}
 	if pubicKey != nil {
-		c := curve.Get(privKey)
+		c := curve.Get(m.privKey[:])
 		k, err := c.Shared(pubicKey)
 		if err == nil {
-			l.key = &k
+			l.key = (*[32]byte)(*(*unsafe.Pointer)(unsafe.Pointer(&k)))
 		}
 	}
 	if endPoint != "" {
@@ -44,20 +46,20 @@ func AddPeer(peerip string, pubicKey *[32]byte, endPoint string, allowedIPs []st
 			_, cidr, err := net.ParseCIDR(ipnet)
 			if err == nil {
 				l.allowedips = append(l.allowedips, cidr)
-				routetable[cidr.String()] = append(routetable[cidr.String()], l)
+				l.me.router.SetItem(cidr, l)
 			}
 		}
 	}
-	connmapmu.Lock()
-	connections[peerip] = l
-	connmapmu.Unlock()
+	l.me.connmapmu.Lock()
+	l.me.connections[peerip] = l
+	l.me.connmapmu.Unlock()
 	return
 }
 
 // IsInPeer 查找 peer 是否已经在册
-func IsInPeer(peer string) (p *Link, ok bool) {
-	connmapmu.RLock()
-	p, ok = connections[peer]
-	connmapmu.RUnlock()
+func (m *Me) IsInPeer(peer string) (p *Link, ok bool) {
+	m.connmapmu.RLock()
+	p, ok = m.connections[peer]
+	m.connmapmu.RUnlock()
 	return
 }
